@@ -1,0 +1,1678 @@
+
+#Data Analysis 
+#Libraries 
+set.seed(3000)
+library("matrixStats")
+library("corrgram")
+library("fpc")
+library(Hmisc)
+library("reshape2")
+library("plotly")
+library("ggplot2")
+library("ggmap")
+library("leaflet")
+library("timeDate")
+library("lubridate")
+library(readxl)
+library("zoo")
+library("cluster")
+library("factoextra")
+library("NbClust")
+library (plyr)
+library("reshape")
+library("GMD")
+library("htmltools")
+library("magrittr")
+library("TTR")
+
+#### Functions
+
+# Filter Function
+Filter_Data<-function(month){
+  Zeros<-which(month$valor==0)
+  month<-month[-Zeros,]
+  days_month<-unique(date(month$fecha_hora))
+  days_month<-sort(days_month)
+  
+  days <- data.frame(
+    cliente=character(),
+    municipio= character(),
+    estrato= integer(),
+    fecha_hora=as.Date(character()),
+    valor= integer(),
+    estado= integer(),
+    stringsAsFactors=FALSE) 
+  for (i in 1:length(days_month)){
+    #Debemos conocer cada uno de los clientes de estos días de Octubre, por lo que haremos un llamado al cliente 
+    # del día de estudio
+    
+    Total_Hours<-which(date(month$fecha_hora)==days_month[i])#Cambiar por i
+    Total_Hours<-month[Total_Hours,]
+    
+    #Obtener los clientes que tienen horas de medición en el día de estudio
+    Clients<-unique(Total_Hours$cliente)
+    n1<-0
+    for (j in 1:length(Clients)){
+      
+      Client_Study<-which(Total_Hours$cliente==Clients[j])#Cambiar por j
+      Client_Study<-Total_Hours[Client_Study,]
+      Client_Study<-Client_Study[order(Client_Study$fecha_hora),] 
+      Hours<-0:23
+      Client_Hours<-hour(Client_Study$fecha_hora)
+      if(length(Client_Study$fecha_hora)==24 & identical(Client_Hours,Hours)){
+        DataFrame<-data.frame(Client_Study)
+        days<-rbind.data.frame(DataFrame,days)
+        
+      }
+      
+    }
+    
+    
+  }
+  month<-days
+  
+  
+  return(month)
+}
+
+
+#Clients_Month
+Clients_Month<-function(n){
+  
+  Days_Month<-sort(unique(date(n$fecha_hora)))
+  Cluster_Month<-matrix(list(),length(Days_Month),1)
+  Names_Clients<-matrix(list(),length(Days_Month),1)
+  
+  
+  
+  for (i in 1:length(Days_Month)){
+    Month_day<-which(date(n$fecha_hora)==Days_Month[i]) #Cambiar por i
+    Month_day<-n[Month_day,]
+    
+    #Obtenemos los clientes para luego realizar un nuevo ciclo for
+    Clients_Month<-unique(Month_day$cliente)
+    #Generar Data Frame Vacío donde pondremos los valores de cada cliente
+    day_Analysis <- data.frame(
+      stringsAsFactors=FALSE)
+    for (j in 1:length(Clients_Month)){
+      
+      Client_Analysis<-which(Month_day$cliente==Clients_Month[j])
+      Client_Analysis<-Month_day[Client_Analysis,]
+      Client_Analysis<-Client_Analysis[with(Client_Analysis, order(Client_Analysis$fecha_hora)), ]#Organizar las horas del cliente a ingresar en el cluster
+      #Ingresar Cliente a data.Frame
+      Client_Value<-data.frame(Client_Analysis$valor)
+      Client_Value<-as.data.frame(t(Client_Value))
+      day_Analysis<-rbind.data.frame(day_Analysis, Client_Value)
+      
+    }
+    row.names(day_Analysis)<-Clients_Month
+    
+    Cluster_Month[[i,1]]<-day_Analysis
+    Names_Clients[[i,1]]<-Clients_Month
+  }
+  
+  return(Names_Clients)
+}
+
+#Cluster Analyze Stratum
+Cluster_Analysis_Estratum_MD<-function(month,n,file_path,label){
+  item_Month<-Separate_Stratum(month)
+  item<-sort(unique(n))
+  
+  
+  
+  for(i in 1:length(item_Month)){
+    
+    
+    Cluster_Month<-Cluster_Organize(item_Month[[i,1]])
+    Clients_AMonth<-Clients_Month(item_Month[[i,1]])
+    days_AMonth<-Days_Month(item_Month[[i,1]])
+    k<-rep(1,length(Cluster_Month))
+    n<-sapply(Cluster_Month[1,], NROW)
+    if(n>30 ){
+      Cluster_MeanMD(Cluster_Month,Clients_AMonth,days_AMonth,file_path,k,item[i],label)
+      
+    }
+    else{
+      message<-"Warning Not Enough Data"
+      print(paste(message," for",label,"-",item[i]))
+    }
+  }
+  
+}
+
+#Cluster Analysis Locality
+Cluster_Analysis_Locality_MD<-function(month,n,file_path,label){
+  item_Month<-Separate_Locality(month)
+  item<-sort(unique(n))
+  
+  
+  
+  for(i in 1:length(item_Month)){
+    
+    
+    Cluster_Month<-Cluster_Organize(item_Month[[i,1]])
+    Clients_AMonth<-Clients_Month(item_Month[[i,1]])
+    days_AMonth<-Days_Month(item_Month[[i,1]])
+    k<-rep(1,length(Cluster_Month))
+    n<-sapply(Cluster_Month[1,], NROW)
+    if(n>30 ){
+      Cluster_MeanMD(Cluster_Month,Clients_AMonth,days_AMonth,file_path,k,item[i],label)
+      
+    }
+    else{
+      message<-"Warning Not Enough Data"
+      print(paste(message," for",label,"-",item[i]))
+    }
+  }
+  
+}
+
+#Optimize k using th elbow method
+elbow.k <- function(f){
+  asw <- numeric(20)
+  for (k in 2:20)
+    asw[[k]] <- pam(f,k)$silinfo$avg.width
+  
+  k.best <- which.max(asw)
+  cl <- kmeans(f,k.best)
+  return(unlist(round(cl$centers,3),recursive = FALSE))
+}
+
+Days_Month<-function(n)
+{x<-unique(date(n$fecha_hora))
+return(x)
+}
+
+#Cluster Images
+
+Cluster_Images<-function(Weekday,file_path){
+  
+  
+  Day_name<-name(Weekday)
+  
+  DayOfAnalysis<-Weekday
+  
+  
+  km.res <- kmeans(DayOfAnalysis,1, nstart = 25)
+  
+  
+  mypath <- file.path("G:","Tesis Eléctrica","Analisis","Analisis",file_path,paste("Cluster_",Day_name, ".jpg", sep = ""))
+  jpeg(file=mypath)
+  print(fviz_cluster(km.res, data = DayOfAnalysis, frame.type = "ellipse",main=Day_name)+
+          theme_minimal())
+  dev.off()
+  
+  
+  
+  #Obtain Mean
+}
+
+#Cluster Mean
+
+Cluster_Mean<-function(Cluster_Month,Clients_Month,days_Month,folder_name){
+  Cluster_Month<-Cluster_Month
+  Names_Clients<-Clients_Month
+  Days_Month<-days_Month
+  
+  
+  
+  
+  Month_Mean_Consume<-matrix(list(),length(Cluster_Month),1)
+  
+  for (j in 1:length(Cluster_Month)){
+    DayOfAnalysis<-ldply(Cluster_Month[j,1], data.frame)
+    Names_Clients_Month<-ldply(Names_Clients[j,1])
+    row.names(DayOfAnalysis)<-Names_Clients_Month
+    k<-elbow.k(DayOfAnalysis)
+    
+    km.res <- kmeans(DayOfAnalysis, k, nstart = 25)
+    
+    
+    mypath <- file.path("C:","Users","SEBAS","Desktop","Proyecto Codensa",folder_name,paste("Cluster_", Days_Month[j], ".jpg", sep = ""))
+    jpeg(file=mypath)
+    print(fviz_cluster(km.res, data = DayOfAnalysis, frame.type = "ellipse",main=Days_Month[j])+
+            theme_minimal())
+    dev.off()
+    
+    
+    rm(Study_Mean)
+    Study_Mean<-ldply(km.res[2],data.frame)
+    Study_Mean<-Study_Mean[,-1]
+    Hours<-0:23
+    colnames(Study_Mean)<-Hours
+    Filas<-nrow(Study_Mean)
+    Study_Mean<-melt(Study_Mean)
+    Study_Mean$Grupos<-1:Filas
+    Month_Mean_Consume[[j,1]]<-Study_Mean
+    
+    mypath <- file.path("C:","Users","SEBAS","Desktop","Proyecto Codensa",folder_name,paste("Media_Grupos_", Days_Month[j], ".jpg", sep = ""))
+    jpeg(file=mypath)
+    print( ggplot(Study_Mean, aes(variable, value, group=factor(Grupos), color=Grupos)) + geom_line(aes(color=factor(Grupos))) + xlab("Hora")+ ylab("W")+ggtitle(paste("Media_Grupos_", Days_Month[j])))
+    dev.off()
+    
+  }
+}
+
+Cluster_Mean_Nout<-function(Cluster_Month,days_Month,folder_name){
+  Days_Month<-days_Month
+  
+  Month_Mean_Consume<-matrix(list(),length(Cluster_Month),1)
+  
+  for (j in 1:length(Cluster_Month)){
+    DayOfAnalysis<-Cluster_Month[j,1]
+    DayOfAnalysis<- do.call(rbind.data.frame,DayOfAnalysis )
+    # k<-elbow.k(DayOfAnalysis)
+    
+    km.res <- kmeans(DayOfAnalysis, 1, nstart = 25)
+    
+    
+    mypath <- file.path("C:","Users","SEBAS","Desktop","Proyecto Codensa",folder_name,paste("Cluster_", Days_Month[j], ".jpg", sep = ""))
+    jpeg(file=mypath)
+    print(fviz_cluster(km.res, data = DayOfAnalysis, frame.type = "ellipse",main=Days_Month[j])+
+            theme_minimal())
+    dev.off()
+    
+    
+    rm(Study_Mean)
+    Study_Mean<-ldply(km.res[2],data.frame)
+    Study_Mean<-Study_Mean[,-1]
+    Hours<-0:23
+    colnames(Study_Mean)<-Hours
+    Filas<-nrow(Study_Mean)
+    Study_Mean<-melt(Study_Mean)
+    Study_Mean$Grupos<-1:Filas
+    Month_Mean_Consume[[j,1]]<-Study_Mean
+    
+    mypath <- file.path("C:","Users","SEBAS","Desktop","Proyecto Codensa",folder_name,paste("Media_Grupos_", Days_Month[j], ".jpg", sep = ""))
+    jpeg(file=mypath)
+    print( ggplot(Study_Mean, aes(variable, value, group=factor(Grupos), color=Grupos)) + geom_line(aes(color=factor(Grupos))) + xlab("Hora")+ ylab("W")+ggtitle(paste("Media_Grupos_", Days_Month[j])))
+    dev.off()
+    
+  }
+}
+
+#Cluster Multiple Data
+
+Cluster_MeanMD<-function(Cluster_Month,Clients_Month,days_Month,folder_name,k,label,label2){
+  Cluster_Month<-Cluster_Month
+  Names_Clients<-Clients_Month
+  Days_Month<-days_Month
+  
+  
+  
+  
+  Month_Mean_Consume<-matrix(list(),length(k),1)
+  
+  for (j in 1:length(k)){
+    DayOfAnalysis<-ldply(Cluster_Month[j,1], data.frame)
+    Names_Clients_Month<-ldply(Names_Clients[j,1])
+    row.names(DayOfAnalysis)<-Names_Clients_Month
+    
+    km.res <- kmeans(DayOfAnalysis, k[j], nstart = 25)
+    
+    
+    mypath <- file.path("G:","Tesis Eléctrica","Analisis","Analisis",folder_name,paste("Cluster_", Days_Month[j],label2,"-",label, ".jpg", sep = ""))
+    jpeg(file=mypath)
+    print(fviz_cluster(km.res, data = DayOfAnalysis, frame.type = "ellipse",main=paste(Days_Month[j],"-",label2,"-",label))+
+            theme_minimal())
+    dev.off()
+    
+    
+    rm(Study_Mean)
+    Study_Mean<-ldply(km.res[2],data.frame)
+    Study_Mean<-Study_Mean[,-1]
+    colnames(Study_Mean)<-Hours
+    Filas<-nrow(Study_Mean)
+    Study_Mean<-melt(Study_Mean)
+    Study_Mean$Grupos<-1:Filas
+    Month_Mean_Consume[[j,1]]<-Study_Mean
+    
+    mypath <- file.path("G:","Tesis Eléctrica","Analisis","Analisis",folder_name,paste("Media_Grupos_", Days_Month[j],"-",label2,"-",label, ".jpg", sep = ""))
+    jpeg(file=mypath)
+    print( ggplot(Study_Mean, aes(variable, value, group=factor(Grupos), color=Grupos)) + geom_line(aes(color=factor(Grupos))) + xlab("Hora")+ ylab("W")+ggtitle(paste("Media_Grupos_",label2,"-",label,"-" ,Days_Month[j])))
+    dev.off()
+    
+  }
+}
+#Cluster Organize
+Cluster_Organize<-function(n){
+  
+  Days_Month<-sort(unique(date(n$fecha_hora)))
+  Cluster_Month<-matrix(list(),length(Days_Month),1)
+  Names_Clients<-matrix(list(),length(Days_Month),1)
+  
+  
+  
+  for (i in 1:length(Days_Month)){
+    Month_day<-which(date(n$fecha_hora)==Days_Month[i]) #Cambiar por i
+    Month_day<-n[Month_day,]
+    
+    #Obtenemos los clientes para luego realizar un nuevo ciclo for
+    Clients_Month<-unique(Month_day$cliente)
+    #Generar Data Frame Vacío donde pondremos los valores de cada cliente
+    day_Analysis <- data.frame(
+      stringsAsFactors=FALSE)
+    for (j in 1:length(Clients_Month)){
+      
+      Client_Analysis<-which(Month_day$cliente==Clients_Month[j])
+      Client_Analysis<-Month_day[Client_Analysis,]
+      Client_Analysis<-Client_Analysis[with(Client_Analysis, order(Client_Analysis$fecha_hora)), ]#Organizar las horas del cliente a ingresar en el cluster
+      #Ingresar Cliente a data.Frame
+      Client_Value<-data.frame(Client_Analysis$valor)
+      Client_Value<-as.data.frame(t(Client_Value))
+      day_Analysis<-rbind.data.frame(day_Analysis, Client_Value)
+      
+    }
+    row.names(day_Analysis)<-Clients_Month
+    
+    Cluster_Month[[i,1]]<-day_Analysis
+    Names_Clients[[i,1]]<-Clients_Month
+  }
+  
+  return(Cluster_Month)
+}
+## Create Hours Analysis
+Hour_Separation_Localities<-function(n,month){
+  Month_Separation<-Separate_Locality(n)
+  Localities_Names<-Obtain_Localities_names(Month_Separation)
+  
+  x<-length(Localities_Names)
+  for(i in 1:x){
+    my_locality<-paste(month,"-",Localities_Names[i],sep="")
+    Hours<-Separate_Hours(Month_Separation[[i,1]])
+    assign(my_locality,Hours, envir = .GlobalEnv)
+    
+    my_locality_value<-paste(month,"-",Localities_Names[i],"-","value",sep="")
+    
+    assign(my_locality_value,Separate_Hours_value(Month_Separation[[i,1]]), envir = .GlobalEnv)
+  }
+  
+  
+}
+
+Separation_Localities_Month<-function(n,month){
+  Month_Separation<-Separate_Locality(n)
+  Localities_Names<-Obtain_Localities_names(Month_Separation)
+  
+  x<-length(Localities_Names)
+  for(i in 1:x){
+    my_locality<-paste(month,"_",Localities_Names[i],sep="")
+    df<-as.data.frame(Month_Separation[[i,1]])
+    assign(my_locality,df, envir = .GlobalEnv)
+    
+ 
+  }
+  
+  
+}
+
+Separation_Strata_Month<-function(n,month){
+  Month_Separation<-Separate_Stratum(n)
+  Strata<-sort(unique(n$estrato))
+  
+  x<-length(Strata)
+  for(i in 1:x){
+    my_locality<-paste(month,"_",Strata[i],sep="")
+    df<-Cluster_Outliers_removal_Stratum(Cluster_Organize_General(as.data.frame(Month_Separation[[i,1]])))
+    assign(my_locality,df, envir = .GlobalEnv)
+    
+    
+  }
+  
+  
+}
+
+Separation_Strata_Month1<-function(n,month){
+  Month_Separation<-Separate_Stratum(n)
+  Strata<-sort(unique(n$estrato))
+  
+  x<-length(Strata)
+  for(i in 1:x){
+    my_locality<-paste(month,"_",Strata[i],sep="")
+    df<-((as.data.frame(Month_Separation[[i,1]])))
+    assign(my_locality,df, envir = .GlobalEnv)
+    
+    
+  }
+  
+  
+}
+Separate_Hours<-function(n){
+  Month_Hours<-matrix(list(),24,1)
+  for( i in 0:23){
+    j<-i+1
+    Hour_Analysis<-which(hour(n$fecha_hora)==i)
+    Hour_Analysis<-n[Hour_Analysis,]
+    Month_Hours[[j,1]]<-Hour_Analysis
+  }
+  
+  return(Month_Hours)
+}
+
+
+Separate_Hours_value<-function(n){
+  Month_Hours<-matrix(list(),24,1)
+  for( i in 0:23){
+    j<-i+1
+    Hour_Analysis<-which(hour(n$fecha_hora)==i)
+    Hour_Analysis<-n[Hour_Analysis,]
+    Month_Hours[[j,1]]<-Hour_Analysis$valor
+  }
+  
+  return(Month_Hours)
+}
+
+Mean_for_Correlation<-function(n){
+  km.res <- kmeans(n, 1, nstart = 25)
+  Study_Mean<-ldply(km.res[2],data.frame)
+  Study_Mean<-Study_Mean[,-1]
+  Hours<-0:23
+  colnames(Study_Mean)<-Hours
+  return(Study_Mean)
+}
+
+##Obtain the mean for each locality
+Cluster_Organize_General<-function(n){ 
+  day_Analysis <- data.frame( 
+    stringsAsFactors=FALSE) 
+  Days_Month<-sort(unique(date(n$fecha_hora)))
+  for (i in 1:length(Days_Month)){
+    Month_day<-which(date(n$fecha_hora)==Days_Month[i]) #Cambiar por i
+    Month_day<-n[Month_day,]
+    
+    #Obtenemos los clientes para luego realizar un nuevo ciclo for 
+    Clients_Month<-unique(Month_day$cliente)
+    #Generar Data Frame Vacío donde pondremos los valores de cada cliente 
+    
+    for (j in 1:length(Clients_Month)){
+      
+      Client_Analysis<-which(Month_day$cliente==Clients_Month[j])
+      Client_Analysis<-Month_day[Client_Analysis,]
+      Client_Analysis<-Client_Analysis[with(Client_Analysis, order(Client_Analysis$fecha_hora)), ]#Organizar las horas del cliente a ingresar en el cluster
+      #Ingresar Cliente a data.Frame
+      Client_Value<-data.frame(Client_Analysis$valor)
+      Client_Value<-as.data.frame(t(Client_Value))
+      day_Analysis<-rbind.data.frame(day_Analysis, Client_Value)
+      
+    }
+    
+  }
+  
+  return(day_Analysis)
+}
+
+
+Cluster_Organize_General_Clients<-function(n){ 
+  day_Analysis <- data.frame( 
+    stringsAsFactors=FALSE) 
+  Days_Month<-sort(unique(date(n$fecha_hora)))
+  for (i in 1:length(Days_Month)){
+    Month_day<-which(date(n$fecha_hora)==Days_Month[i]) #Cambiar por i
+    Month_day<-n[Month_day,]
+    
+    #Obtenemos los clientes para luego realizar un nuevo ciclo for 
+    Clients_Month<-unique(Month_day$cliente)
+    #Generar Data Frame Vacío donde pondremos los valores de cada cliente 
+    
+    for (j in 1:length(Clients_Month)){
+      
+      day_Analysis<-rbind.data.frame(day_Analysis, Clients_Month[j])
+      
+    }
+    
+  }
+  
+  return(day_Analysis)
+}
+
+#### Format for doing a cor analysis
+Format_Cor_Analysis<-function(n){
+  Month_Cor<-n
+  localidades<-unique(Month_Cor$localidad)
+  Locality<-rep(0,length(Month_Cor$localidad))
+  for( j in 1:length(Month_Cor$localidad)){
+    x<-which(localidades==Month_Cor$localidad[j])
+    Locality[j]<-x
+  }
+  Month_Cor$localidad<-Locality
+  Month_Cor$fecha_hora<-Date_Numeric(n)
+  Eliminate<-c(2,7)
+  Month_Cor<-Month_Cor[,-Eliminate]
+  
+  
+  Month_Cor<-rcorr(Month_Cor)
+  return(Month_Cor)
+}
+
+### Convert from date-time to numeric
+Date_Numeric<-function(n){
+  date_to_numeric <- ymd_hms(n$fecha_hora)
+  date_to_numeric<-as.numeric(date_to_numeric)
+  return(date_to_numeric)
+}
+
+
+### Convert from numeric to date-time
+Numeric_Date<-function(n){
+  numeric_to_date<- as.POSIXct(n, origin = "1970-01-01")
+  return(numeric_to_date)
+}
+
+
+###### 
+### Separate from estratum
+Separate_Stratum<-function(month){
+  Stratum<-sort(unique(month$estrato))
+  Stratum_Division<-matrix(list(),length(Stratum),1)
+  
+  for (i in 1:length(Stratum)){
+    Group_Stratum<-which(month$estrato==Stratum[i]) #Cambiar por i
+    Group_Stratum<-month[Group_Stratum,]
+    
+    Stratum_Division[[i,1]]<-Group_Stratum
+    
+  }
+  return(Stratum_Division)
+  
+}
+
+####
+#### Separate from Locality
+Separate_Locality<-function(month){
+  Locality<-unique(month$localidad)
+  Locality_Division<-matrix(list(),length(Locality),1)
+  
+  for (i in 1:length(Locality)){
+    Group_Locality<-which(month$localidad==Locality[i]) #Cambiar por i
+    Group_Locality<-month[Group_Locality,]
+    
+    Locality_Division[[i,1]]<-Group_Locality
+    
+    
+  }
+  return( Locality_Division)
+}
+
+
+Weekday_Analysis_Clients<-function(n){
+  
+  Weekdays_Month<-as.character(wday(n$fecha_hora, label=TRUE))
+  Quantity<-c(length(which(Weekdays_Month=="Mon")),length(which(Weekdays_Month=="Tues")),
+              length(which(Weekdays_Month=="Wed")),length(which(Weekdays_Month=="Thurs")),
+              length(which(Weekdays_Month=="Fri")),length(which(Weekdays_Month=="Sat")),
+              length(which(Weekdays_Month=="Sun")))
+  
+  
+  
+  Mondays_Month<-which(Weekdays_Month=="Mon")
+  Tuesdays_Month<-which(Weekdays_Month=="Tues")
+  Wednesdays_Month<-which(Weekdays_Month=="Wed")
+  Thursdays_Month<-which(Weekdays_Month=="Thurs")
+  Fridays_Month<-which(Weekdays_Month=="Fri")
+  Saturdays_Month<-which(Weekdays_Month=="Sat")
+  Sundays_Month<-which(Weekdays_Month=="Sun")
+  
+  Mondays_Month<-n[Mondays_Month,]
+  Tuesdays_Month<-n[Tuesdays_Month,]
+  Wednesdays_Month<-n[Wednesdays_Month,]
+  Thursdays_Month<-n[Thursdays_Month,]
+  Fridays_Month<-n[Fridays_Month,]
+  Saturdays_Month<-n[Saturdays_Month,]
+  Sundays_Month<-n[Sundays_Month,]
+  
+  
+  
+  Days_Mon<-unique(date(Mondays_Month$fecha_hora))
+  Days_Tues<-unique(date(Tuesdays_Month$fecha_hora))
+  Days_Wed<-unique(date(Wednesdays_Month$fecha_hora))
+  Days_Thurs<-unique(date(Thursdays_Month$fecha_hora))
+  Days_Fri<-unique(date(Fridays_Month$fecha_hora))
+  Days_Sat<-unique(date(Saturdays_Month$fecha_hora))
+  Days_Sun<-unique(date(Sundays_Month$fecha_hora))
+  
+  
+  MonMonth_Cluster <- data.frame(
+    stringsAsFactors=FALSE)
+  for( i in 1:length(Days_Mon)){
+    Mon<-which(date(Mondays_Month$fecha_hora)==Days_Mon[i])
+    Mon<-Mondays_Month[Mon,]
+    
+    Clients_Mon<-unique(Mon$cliente)
+    
+    for (j in 1:length(Clients_Mon)){
+      Client_Analysis<-which(Mon$cliente==Clients_Mon[j])
+      Client_Analysis<-Mon[Client_Analysis,]
+      Client_Analysis<-Client_Analysis[with(Client_Analysis, order(Client_Analysis$fecha_hora)), ]#Organizar las horas del cliente a ingresar en el cluster
+      #Ingresar Cliente a data.Frame
+      Client_Value<-data.frame(Client_Analysis$valor)
+      Client_Value<-as.data.frame(t(Client_Value))
+      Client_Value<-cbind(Client_Value,unique(Client_Analysis$cliente))
+      MonMonth_Cluster<-rbind.data.frame( MonMonth_Cluster, Client_Value)
+    }
+    
+  }
+  
+  
+  
+  TuesMonth_Cluster <- data.frame(
+    stringsAsFactors=FALSE)
+  for( i in 1:length(Days_Tues)){
+    Tues<-which(date(Tuesdays_Month$fecha_hora)==Days_Tues[i])
+    Tues<-Tuesdays_Month[Tues,]
+    
+    Clients_Tues<-unique(Tues$cliente)
+    
+    for (j in 1:length(Clients_Tues)){
+      Client_Analysis<-which(Tues$cliente==Clients_Tues[j])
+      Client_Analysis<-Tues[Client_Analysis,]
+      Client_Analysis<-Client_Analysis[with(Client_Analysis, order(Client_Analysis$fecha_hora)), ]#Organizar las horas del cliente a ingresar en el cluster
+      #Ingresar Cliente a data.Frame
+      Client_Value<-data.frame(Client_Analysis$valor)
+      Client_Value<-as.data.frame(t(Client_Value))
+      Client_Value<-cbind(Client_Value,unique(Client_Analysis$cliente))
+      
+      TuesMonth_Cluster<-rbind.data.frame( TuesMonth_Cluster, Client_Value)
+    }
+    
+  }
+  
+  
+  
+  
+  
+  WedMonth_Cluster <- data.frame(
+    stringsAsFactors=FALSE)
+  for( i in 1:length(Days_Wed)){
+    Wed<-which(date(Wednesdays_Month$fecha_hora)==Days_Wed[i])
+    Wed<-Wednesdays_Month[Wed,]
+    
+    Clients_Wed<-unique(Wed$cliente)
+    
+    for (j in 1:length(Clients_Wed)){
+      Client_Analysis<-which(Wed$cliente==Clients_Wed[j])
+      Client_Analysis<-Wed[Client_Analysis,]
+      Client_Analysis<-Client_Analysis[with(Client_Analysis, order(Client_Analysis$fecha_hora)), ]#Organizar las horas del cliente a ingresar en el cluster
+      #Ingresar Cliente a data.Frame
+      Client_Value<-data.frame(Client_Analysis$valor)
+      Client_Value<-as.data.frame(t(Client_Value))
+      Client_Value<-cbind(Client_Value,unique(Client_Analysis$cliente))
+      
+      WedMonth_Cluster<-rbind.data.frame( WedMonth_Cluster, Client_Value)
+    }
+    
+  }
+  
+  
+  
+  ThursMonth_Cluster <- data.frame(
+    stringsAsFactors=FALSE)
+  for( i in 1:length(Days_Thurs)){
+    Thurs<-which(date(Thursdays_Month$fecha_hora)==Days_Thurs[i])
+    Thurs<-Thursdays_Month[Thurs,]
+    
+    Clients_Thurs<-unique(Thurs$cliente)
+    
+    for (j in 1:length(Clients_Thurs)){
+      Client_Analysis<-which(Thurs$cliente==Clients_Thurs[j])
+      Client_Analysis<-Thurs[Client_Analysis,]
+      Client_Analysis<-Client_Analysis[with(Client_Analysis, order(Client_Analysis$fecha_hora)), ]#Organizar las horas del cliente a ingresar en el cluster
+      #Ingresar Cliente a data.Frame
+      Client_Value<-data.frame(Client_Analysis$valor)
+      Client_Value<-as.data.frame(t(Client_Value))
+      Client_Value<-cbind(Client_Value,unique(Client_Analysis$cliente))
+      
+      ThursMonth_Cluster<-rbind.data.frame( ThursMonth_Cluster, Client_Value)
+    }
+    
+  }
+  
+  
+  
+  
+  FriMonth_Cluster <- data.frame(
+    stringsAsFactors=FALSE)
+  for( i in 1:length(Days_Fri)){
+    Fri<-which(date(Fridays_Month$fecha_hora)==Days_Fri[i])
+    Fri<-Fridays_Month[Fri,]
+    
+    Clients_Fri<-unique(Fri$cliente)
+    
+    for (j in 1:length(Clients_Fri)){
+      Client_Analysis<-which(Fri$cliente==Clients_Fri[j])
+      Client_Analysis<-Fri[Client_Analysis,]
+      Client_Analysis<-Client_Analysis[with(Client_Analysis, order(Client_Analysis$fecha_hora)), ]#Organizar las horas del cliente a ingresar en el cluster
+      #Ingresar Cliente a data.Frame
+      Client_Value<-data.frame(Client_Analysis$valor)
+      Client_Value<-as.data.frame(t(Client_Value))
+      Client_Value<-cbind(Client_Value,unique(Client_Analysis$cliente))
+      
+      FriMonth_Cluster<-rbind.data.frame( FriMonth_Cluster, Client_Value)
+    }
+    
+  }
+  
+  
+  
+  SatMonth_Cluster <- data.frame(
+    stringsAsFactors=FALSE)
+  for( i in 1:length(Days_Sat)){
+    Sat<-which(date(Saturdays_Month$fecha_hora)==Days_Sat[i])
+    Sat<-Saturdays_Month[Sat,]
+    
+    Clients_Sat<-unique(Sat$cliente)
+    
+    for (j in 1:length(Clients_Sat)){
+      Client_Analysis<-which(Sat$cliente==Clients_Sat[j])
+      Client_Analysis<-Sat[Client_Analysis,]
+      Client_Analysis<-Client_Analysis[with(Client_Analysis, order(Client_Analysis$fecha_hora)), ]#Organizar las horas del cliente a ingresar en el cluster
+      #Ingresar Cliente a data.Frame
+      Client_Value<-data.frame(Client_Analysis$valor)
+      Client_Value<-as.data.frame(t(Client_Value))
+      Client_Value<-cbind(Client_Value,unique(Client_Analysis$cliente))
+      
+      SatMonth_Cluster<-rbind.data.frame( SatMonth_Cluster, Client_Value)
+    }
+    
+  }
+  
+  
+  
+  SunMonth_Cluster <- data.frame(
+    stringsAsFactors=FALSE)
+  for( i in 1:length(Days_Sun)){
+    Sun<-which(date(Sundays_Month$fecha_hora)==Days_Sun[i])
+    Sun<-Sundays_Month[Sun,]
+    
+    Clients_Sun<-unique(Sun$cliente)
+    
+    for (j in 1:length(Clients_Sun)){
+      Client_Analysis<-which(Sun$cliente==Clients_Sun[j])
+      Client_Analysis<-Sun[Client_Analysis,]
+      Client_Analysis<-Client_Analysis[with(Client_Analysis, order(Client_Analysis$fecha_hora)), ]#Organizar las horas del cliente a ingresar en el cluster
+      #Ingresar Cliente a data.Frame
+      Client_Value<-data.frame(Client_Analysis$valor)
+      Client_Value<-as.data.frame(t(Client_Value))
+      Client_Value<-cbind(Client_Value,unique(Client_Analysis$cliente))
+      
+      SunMonth_Cluster<-rbind.data.frame( SunMonth_Cluster, Client_Value)
+    }
+    
+  }
+  
+  save(MonMonth_Cluster,TuesMonth_Cluster,WedMonth_Cluster,
+       ThursMonth_Cluster,FriMonth_Cluster,SatMonth_Cluster,
+       SunMonth_Cluster, file="Weekdays_Clusters_Month.RData")
+  
+  
+  
+  Weekdays_Clusters<-matrix(list(),7,1)
+  Weekdays_Clusters[[1,1]]<-MonMonth_Cluster
+  Weekdays_Clusters[[2,1]]<-TuesMonth_Cluster
+  Weekdays_Clusters[[3,1]]<-WedMonth_Cluster
+  Weekdays_Clusters[[4,1]]<-ThursMonth_Cluster
+  Weekdays_Clusters[[5,1]]<-FriMonth_Cluster
+  Weekdays_Clusters[[6,1]]<-SatMonth_Cluster
+  Weekdays_Clusters[[7,1]]<- SunMonth_Cluster
+  return(Weekdays_Clusters)
+  
+  
+  
+}
+
+#
+Weekday_Analysis<-function(n){
+  
+  Weekdays_Month<-as.character(wday(n$fecha_hora, label=TRUE))
+  Quantity<-c(length(which(Weekdays_Month=="Mon")),length(which(Weekdays_Month=="Tues")),
+              length(which(Weekdays_Month=="Wed")),length(which(Weekdays_Month=="Thurs")),
+              length(which(Weekdays_Month=="Fri")),length(which(Weekdays_Month=="Sat")),
+              length(which(Weekdays_Month=="Sun")))
+  
+  
+  
+  Mondays_Month<-which(Weekdays_Month=="Mon")
+  Tuesdays_Month<-which(Weekdays_Month=="Tues")
+  Wednesdays_Month<-which(Weekdays_Month=="Wed")
+  Thursdays_Month<-which(Weekdays_Month=="Thurs")
+  Fridays_Month<-which(Weekdays_Month=="Fri")
+  Saturdays_Month<-which(Weekdays_Month=="Sat")
+  Sundays_Month<-which(Weekdays_Month=="Sun")
+  
+  Mondays_Month<-n[Mondays_Month,]
+  Tuesdays_Month<-n[Tuesdays_Month,]
+  Wednesdays_Month<-n[Wednesdays_Month,]
+  Thursdays_Month<-n[Thursdays_Month,]
+  Fridays_Month<-n[Fridays_Month,]
+  Saturdays_Month<-n[Saturdays_Month,]
+  Sundays_Month<-n[Sundays_Month,]
+  
+  
+  
+  Days_Mon<-unique(date(Mondays_Month$fecha_hora))
+  Days_Tues<-unique(date(Tuesdays_Month$fecha_hora))
+  Days_Wed<-unique(date(Wednesdays_Month$fecha_hora))
+  Days_Thurs<-unique(date(Thursdays_Month$fecha_hora))
+  Days_Fri<-unique(date(Fridays_Month$fecha_hora))
+  Days_Sat<-unique(date(Saturdays_Month$fecha_hora))
+  Days_Sun<-unique(date(Sundays_Month$fecha_hora))
+  
+  
+  MonMonth_Cluster <- data.frame(
+    stringsAsFactors=FALSE)
+  for( i in 1:length(Days_Mon)){
+    Mon<-which(date(Mondays_Month$fecha_hora)==Days_Mon[i])
+    Mon<-Mondays_Month[Mon,]
+    
+    Clients_Mon<-unique(Mon$cliente)
+    
+    for (j in 1:length(Clients_Mon)){
+      Client_Analysis<-which(Mon$cliente==Clients_Mon[j])
+      Client_Analysis<-Mon[Client_Analysis,]
+      Client_Analysis<-Client_Analysis[with(Client_Analysis, order(Client_Analysis$fecha_hora)), ]#Organizar las horas del cliente a ingresar en el cluster
+      #Ingresar Cliente a data.Frame
+      Client_Value<-data.frame(Client_Analysis$valor)
+      Client_Value<-as.data.frame(t(Client_Value))
+      MonMonth_Cluster<-rbind.data.frame( MonMonth_Cluster, Client_Value)
+    }
+    
+  }
+  
+  
+  
+  TuesMonth_Cluster <- data.frame(
+    stringsAsFactors=FALSE)
+  for( i in 1:length(Days_Tues)){
+    Tues<-which(date(Tuesdays_Month$fecha_hora)==Days_Tues[i])
+    Tues<-Tuesdays_Month[Tues,]
+    
+    Clients_Tues<-unique(Tues$cliente)
+    
+    for (j in 1:length(Clients_Tues)){
+      Client_Analysis<-which(Tues$cliente==Clients_Tues[j])
+      Client_Analysis<-Tues[Client_Analysis,]
+      Client_Analysis<-Client_Analysis[with(Client_Analysis, order(Client_Analysis$fecha_hora)), ]#Organizar las horas del cliente a ingresar en el cluster
+      #Ingresar Cliente a data.Frame
+      Client_Value<-data.frame(Client_Analysis$valor)
+      Client_Value<-as.data.frame(t(Client_Value))
+      TuesMonth_Cluster<-rbind.data.frame( TuesMonth_Cluster, Client_Value)
+    }
+    
+  }
+  
+  
+  
+  
+  
+  WedMonth_Cluster <- data.frame(
+    stringsAsFactors=FALSE)
+  for( i in 1:length(Days_Wed)){
+    Wed<-which(date(Wednesdays_Month$fecha_hora)==Days_Wed[i])
+    Wed<-Wednesdays_Month[Wed,]
+    
+    Clients_Wed<-unique(Wed$cliente)
+    
+    for (j in 1:length(Clients_Wed)){
+      Client_Analysis<-which(Wed$cliente==Clients_Wed[j])
+      Client_Analysis<-Wed[Client_Analysis,]
+      Client_Analysis<-Client_Analysis[with(Client_Analysis, order(Client_Analysis$fecha_hora)), ]#Organizar las horas del cliente a ingresar en el cluster
+      #Ingresar Cliente a data.Frame
+      Client_Value<-data.frame(Client_Analysis$valor)
+      Client_Value<-as.data.frame(t(Client_Value))
+      WedMonth_Cluster<-rbind.data.frame( WedMonth_Cluster, Client_Value)
+    }
+    
+  }
+  
+  
+  
+  ThursMonth_Cluster <- data.frame(
+    stringsAsFactors=FALSE)
+  for( i in 1:length(Days_Thurs)){
+    Thurs<-which(date(Thursdays_Month$fecha_hora)==Days_Thurs[i])
+    Thurs<-Thursdays_Month[Thurs,]
+    
+    Clients_Thurs<-unique(Thurs$cliente)
+    
+    for (j in 1:length(Clients_Thurs)){
+      Client_Analysis<-which(Thurs$cliente==Clients_Thurs[j])
+      Client_Analysis<-Thurs[Client_Analysis,]
+      Client_Analysis<-Client_Analysis[with(Client_Analysis, order(Client_Analysis$fecha_hora)), ]#Organizar las horas del cliente a ingresar en el cluster
+      #Ingresar Cliente a data.Frame
+      Client_Value<-data.frame(Client_Analysis$valor)
+      Client_Value<-as.data.frame(t(Client_Value))
+      
+      ThursMonth_Cluster<-rbind.data.frame( ThursMonth_Cluster, Client_Value)
+    }
+    
+  }
+  
+  
+  
+  
+  FriMonth_Cluster <- data.frame(
+    stringsAsFactors=FALSE)
+  for( i in 1:length(Days_Fri)){
+    Fri<-which(date(Fridays_Month$fecha_hora)==Days_Fri[i])
+    Fri<-Fridays_Month[Fri,]
+    
+    Clients_Fri<-unique(Fri$cliente)
+    
+    for (j in 1:length(Clients_Fri)){
+      Client_Analysis<-which(Fri$cliente==Clients_Fri[j])
+      Client_Analysis<-Fri[Client_Analysis,]
+      Client_Analysis<-Client_Analysis[with(Client_Analysis, order(Client_Analysis$fecha_hora)), ]#Organizar las horas del cliente a ingresar en el cluster
+      #Ingresar Cliente a data.Frame
+      Client_Value<-data.frame(Client_Analysis$valor)
+      Client_Value<-as.data.frame(t(Client_Value))
+      
+      FriMonth_Cluster<-rbind.data.frame( FriMonth_Cluster, Client_Value)
+    }
+    
+  }
+  
+  
+  
+  SatMonth_Cluster <- data.frame(
+    stringsAsFactors=FALSE)
+  for( i in 1:length(Days_Sat)){
+    Sat<-which(date(Saturdays_Month$fecha_hora)==Days_Sat[i])
+    Sat<-Saturdays_Month[Sat,]
+    
+    Clients_Sat<-unique(Sat$cliente)
+    
+    for (j in 1:length(Clients_Sat)){
+      Client_Analysis<-which(Sat$cliente==Clients_Sat[j])
+      Client_Analysis<-Sat[Client_Analysis,]
+      Client_Analysis<-Client_Analysis[with(Client_Analysis, order(Client_Analysis$fecha_hora)), ]#Organizar las horas del cliente a ingresar en el cluster
+      #Ingresar Cliente a data.Frame
+      Client_Value<-data.frame(Client_Analysis$valor)
+      Client_Value<-as.data.frame(t(Client_Value))
+      SatMonth_Cluster<-rbind.data.frame( SatMonth_Cluster, Client_Value)
+    }
+    
+  }
+  
+  
+  
+  SunMonth_Cluster <- data.frame(
+    stringsAsFactors=FALSE)
+  for( i in 1:length(Days_Sun)){
+    Sun<-which(date(Sundays_Month$fecha_hora)==Days_Sun[i])
+    Sun<-Sundays_Month[Sun,]
+    
+    Clients_Sun<-unique(Sun$cliente)
+    
+    for (j in 1:length(Clients_Sun)){
+      Client_Analysis<-which(Sun$cliente==Clients_Sun[j])
+      Client_Analysis<-Sun[Client_Analysis,]
+      Client_Analysis<-Client_Analysis[with(Client_Analysis, order(Client_Analysis$fecha_hora)), ]#Organizar las horas del cliente a ingresar en el cluster
+      #Ingresar Cliente a data.Frame
+      Client_Value<-data.frame(Client_Analysis$valor)
+      Client_Value<-as.data.frame(t(Client_Value))
+      SunMonth_Cluster<-rbind.data.frame( SunMonth_Cluster, Client_Value)
+    }
+    
+  }
+  
+  save(MonMonth_Cluster,TuesMonth_Cluster,WedMonth_Cluster,
+       ThursMonth_Cluster,FriMonth_Cluster,SatMonth_Cluster,
+       SunMonth_Cluster, file="Weekdays_Clusters_Month.RData")
+  
+  
+  
+  Weekdays_Clusters<-matrix(list(),7,1)
+  Weekdays_Clusters[[1,1]]<-MonMonth_Cluster
+  Weekdays_Clusters[[2,1]]<-TuesMonth_Cluster
+  Weekdays_Clusters[[3,1]]<-WedMonth_Cluster
+  Weekdays_Clusters[[4,1]]<-ThursMonth_Cluster
+  Weekdays_Clusters[[5,1]]<-FriMonth_Cluster
+  Weekdays_Clusters[[6,1]]<-SatMonth_Cluster
+  Weekdays_Clusters[[7,1]]<- SunMonth_Cluster
+  return(Weekdays_Clusters)
+  
+  
+  
+}
+
+Weekdays_Cluster_Analysis_Noout<-function(Weekdays_Cluster,folder_name){
+  Month_Mean_Consume<-matrix(list(),7,1)
+  
+  Weekdays_Names<-c("Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday")
+  for (j in 1:7){
+    x<-Weekdays_Cluster[[j,1]]
+    x<- do.call(rbind.data.frame,x )
+    
+    # k<-elbow.k(x) #Optimize k, consume a lot of time
+    k<-1 #if you want to optimize the k, you should use the code above
+    km.res <- kmeans(x,k, nstart = 25)
+    
+    
+    mypath <- file.path("C:","Users","SEBAS","Desktop","Proyecto Codensa",folder_name,paste("Cluster_", Weekdays_Names[j], ".jpg", sep = ""))
+    jpeg(file=mypath)
+    print(fviz_cluster(km.res, data = x, frame.type = "ellipse",main=Weekdays_Names[j])+
+            theme_minimal())
+    dev.off()
+    
+    
+    rm(Study_Mean)
+    Study_Mean<-ldply(km.res[2],data.frame)
+    Study_Mean<-Study_Mean[,-1]
+    Hours<-0:23
+    colnames(Study_Mean)<-Hours
+    Filas<-nrow(Study_Mean)
+    Study_Mean<-melt(Study_Mean)
+    Study_Mean$Grupos<-1:Filas
+    Month_Mean_Consume[[j,1]]<-Study_Mean
+    
+    mypath <- file.path("C:","Users","SEBAS","Desktop","Proyecto Codensa",folder_name,paste("Media_Grupos_", Weekdays_Names[j], ".jpg", sep = ""))
+    jpeg(file=mypath)
+    print( ggplot(Study_Mean, aes(variable, value, group=factor(Grupos), color=Grupos)) + geom_line(aes(color=factor(Grupos))) + xlab("Hora")+ ylab("W")+ggtitle(paste("Media_Grupos_", Weekdays_Names[j])))
+    dev.off()
+  }
+}
+
+Weekdays_Cluster_Analysis<-function(Weekdays_Cluster,folder_name){
+  Month_Mean_Consume<-matrix(list(),7,1)
+  
+  Weekdays_Names<-c("Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday")
+  for (j in 1:7){
+    x<-Weekdays_Cluster[[j,1]]
+    # k<-elbow.k(x) #Optimize k, consume a lot of time
+    k<-1 #if you want to optimize the k, you should use the code above
+    km.res <- kmeans(x,k, nstart = 25)
+    
+    
+    mypath <- file.path("C:","Users","SEBAS","Desktop","Proyecto Codensa",folder_name,paste("Cluster_", Weekdays_Names[j], ".jpg", sep = ""))
+    jpeg(file=mypath)
+    print(fviz_cluster(km.res, data = x, frame.type = "ellipse",main=Weekdays_Names[j])+
+            theme_minimal())
+    dev.off()
+    
+    
+    rm(Study_Mean)
+    Study_Mean<-ldply(km.res[2],data.frame)
+    Study_Mean<-Study_Mean[,-1]
+    Hours<-0:23
+    colnames(Study_Mean)<-Hours
+    Filas<-nrow(Study_Mean)
+    Study_Mean<-melt(Study_Mean)
+    Study_Mean$Grupos<-1:Filas
+    Month_Mean_Consume[[j,1]]<-Study_Mean
+    
+    mypath <- file.path("C:","Users","SEBAS","Desktop","Proyecto Codensa",folder_name,paste("Media_Grupos_", Weekdays_Names[j], ".jpg", sep = ""))
+    jpeg(file=mypath)
+    print( ggplot(Study_Mean, aes(variable, value, group=factor(Grupos), color=Grupos)) + geom_line(aes(color=factor(Grupos))) + xlab("Hora")+ ylab("W")+ggtitle(paste("Media_Grupos_", Weekdays_Names[j])))
+    dev.off()
+    
+  
+  }
+  return(Month_Mean_Consume)
+}
+
+Stratum_Cluster_Analysis<-function(Stratum_Cluster,folder_name){
+  Month_Mean_Consume<-matrix(list(),7,1)
+  
+  Weekdays_Names<-c("0","1","2","3","4","5","6")
+  for (j in 1:7){
+    x<-Stratum_Cluster[[j,1]]
+    # k<-elbow.k(x) #Optimize k, consume a lot of time
+    k<-1 #if you want to optimize the k, you should use the code above
+    km.res <- kmeans(x,k, nstart = 25)
+    
+    
+    mypath <- file.path("C:","Users","SEBAS","Desktop","Proyecto Codensa",folder_name,paste("Cluster_", Weekdays_Names[j], ".jpg", sep = ""))
+    jpeg(file=mypath)
+    print(fviz_cluster(km.res, data = x, frame.type = "ellipse",main=Weekdays_Names[j])+
+            theme_minimal())
+    dev.off()
+    
+    
+    rm(Study_Mean)
+    Study_Mean<-ldply(km.res[2],data.frame)
+    Study_Mean<-Study_Mean[,-1]
+    Hours<-0:23
+    colnames(Study_Mean)<-Hours
+    Filas<-nrow(Study_Mean)
+    Study_Mean<-melt(Study_Mean)
+    Study_Mean$Grupos<-1:Filas
+    Month_Mean_Consume[[j,1]]<-Study_Mean
+    
+    mypath <- file.path("C:","Users","SEBAS","Desktop","Proyecto Codensa",folder_name,paste("Media_Grupos_", Weekdays_Names[j], ".jpg", sep = ""))
+    jpeg(file=mypath)
+    print( ggplot(Study_Mean, aes(variable, value, group=factor(Grupos), color=Grupos)) + geom_line(aes(color=factor(Grupos))) + xlab("Hora")+ ylab("W")+ggtitle(paste("Media_Grupos_", Weekdays_Names[j])))
+    dev.off()
+    
+    
+  }
+  return(Month_Mean_Consume)
+}
+
+
+Weekdays_Cluster_Analysis<-function(Weekdays_Cluster,folder_name){
+  Month_Mean_Consume<-matrix(list(),7,1)
+  
+  Weekdays_Names<-c("Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday")
+  for (j in 1:7){
+    x<-Weekdays_Cluster[[j,1]]
+    # k<-elbow.k(x) #Optimize k, consume a lot of time
+    k<-1 #if you want to optimize the k, you should use the code above
+    km.res <- kmeans(x,k, nstart = 25)
+    
+    
+    mypath <- file.path("C:","Users","SEBAS","Desktop","Proyecto Codensa",folder_name,paste("Cluster_", Weekdays_Names[j], ".jpg", sep = ""))
+    jpeg(file=mypath)
+    print(fviz_cluster(km.res, data = x, frame.type = "ellipse",main=Weekdays_Names[j])+
+            theme_minimal())
+    dev.off()
+    
+    
+    rm(Study_Mean)
+    Study_Mean<-ldply(km.res[2],data.frame)
+    Study_Mean<-Study_Mean[,-1]
+    Hours<-0:23
+    colnames(Study_Mean)<-Hours
+    Filas<-nrow(Study_Mean)
+    Study_Mean<-melt(Study_Mean)
+    Study_Mean$Grupos<-1:Filas
+    Month_Mean_Consume[[j,1]]<-Study_Mean
+    
+    mypath <- file.path("C:","Users","SEBAS","Desktop","Proyecto Codensa",folder_name,paste("Media_Grupos_", Weekdays_Names[j], ".jpg", sep = ""))
+    jpeg(file=mypath)
+    print( ggplot(Study_Mean, aes(variable, value, group=factor(Grupos), color=Grupos)) + geom_line(aes(color=factor(Grupos))) + xlab("Hora")+ ylab("W")+ggtitle(paste("Media_Grupos_", Weekdays_Names[j])))
+    dev.off()
+    
+    
+  }
+  return(Month_Mean_Consume)
+}
+
+Cluster_Analysis<-function(Stratum_Cluster,folder_name,name){
+
+    x<-Stratum_Cluster
+    # k<-elbow.k(x) #Optimize k, consume a lot of time
+    # k<-1 #if you want to optimize the k, you should use the code above
+    km.res <- kmeans(x,1, nstart = 25)
+    
+    
+    mypath <- file.path("C:","Users","SEBAS","Desktop","Proyecto Codensa",folder_name,paste("Cluster_", name, ".jpg", sep = ""))
+    jpeg(file=mypath)
+    print(fviz_cluster(km.res, data = x, frame.type = "ellipse",main=name)+
+            theme_minimal())
+    dev.off()
+    
+    
+    Study_Mean<-ldply(km.res[2],data.frame)
+    Study_Mean<-Study_Mean[,-1]
+    Hours<-0:23
+    colnames(Study_Mean)<-Hours
+    Filas<-nrow(Study_Mean)
+    Study_Mean<-melt(Study_Mean)
+    Study_Mean$Grupos<-1:Filas
+
+    mypath <- file.path("C:","Users","SEBAS","Desktop","Proyecto Codensa",folder_name,paste("Media_Grupos_", name, ".jpg", sep = ""))
+    jpeg(file=mypath)
+    print( ggplot(Study_Mean, aes(variable, value, group=factor(Grupos), color=Grupos)) + geom_line(aes(color=factor(Grupos)))
+           + xlab("Hora")+ ylab("W")+ggtitle(paste("Media_Grupos_", name)))
+    dev.off()
+    
+    
+  
+  return(Study_Mean)
+}
+Weekdays_Cluster_Mean<-function(Weekdays_Cluster){
+  Month_Mean_Consume<-matrix(list(),7,1)
+  
+  Weekdays_Names<-c("Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday")
+  for (j in 1:7){
+    x<-Weekdays_Cluster[[j,1]]
+    # k<-elbow.k(x) #Optimize k, consume a lot of time
+    k<-1 #if you want to optimize the k, you should use the code above
+    km.res <- kmeans(x,k, nstart = 25)
+    
+    
+
+    
+    
+
+    Study_Mean<-ldply(km.res[2],data.frame)
+    Study_Mean<-Study_Mean[,-1]
+    Hours<-0:23
+    colnames(Study_Mean)<-Hours
+    Filas<-nrow(Study_Mean)
+    Study_Mean<-melt(Study_Mean)
+    Study_Mean$Grupos<-1:Filas
+    Month_Mean_Consume[[j,1]]<-Study_Mean
+    
+  }
+  return(Month_Mean_Consume)
+}
+
+#Print Outliers
+Cluster_Outliers<-function(data){
+  Month_Weekdays_Outliers<-matrix(list(),length(data),1)
+  for (j in 1:length(data)){
+    x<-data[[j,1]]
+    # k<-elbow.k(x) #Optimize k, consume a lot of time
+    # k<-1 #if you want to optimize the k, you should use the code above
+    km.res <- kmeans(x,2, nstart = 25)
+    
+    centers <- km.res$centers[km.res$cluster, ] # "centers" is a data frame of 3 centers but the length of iris dataset so we can canlculate distance difference easily.
+    
+    distances <- sqrt(rowSums((x - centers)^2))
+    
+    outliers <- order(distances, decreasing=T)
+    
+    
+    
+    Clients_Outliers<-row.names.data.frame(x)
+    Outliers<-Clients_Outliers[outliers]
+    
+    
+    
+    Month_Weekdays_Outliers[[j,1]]<-Outliers
+    
+    
+    
+  }
+  return(Month_Weekdays_Outliers)
+}
+
+### Clients_Locations HourDay
+Clients_Locations_HourDay<-function(n,Clients){
+  Clients_Hour<-data.frame( 
+    stringsAsFactors=FALSE)
+  for(i in 1: length(n$unique.Client_Analysis.cliente.)){
+    Client<-n$unique.Client_Analysis.cliente.[i]
+    
+    Client_Location<-which(Clients$Clientes.i.==Client)
+    
+    Client_Location<-Clients[Client_Location,]
+    rownames(Client_Location)<-NULL
+    Clients_Hour<-rbind(Clients_Hour,Client_Location)
+  }
+  
+  x<-data.frame(cbind(n,Clients_Hour))
+  
+  return(x)
+}
+
+
+#Outliers that appear for all cases
+
+Cluster_Outliers<-function(data){
+  Month_Weekdays_Outliers<-matrix(list(),length(data),1)
+  for (j in 1:length(data)){
+    x<-November_Organize[[2,1]]
+    # k<-elbow.k(x) #Optimize k, consume a lot of time
+    # k<-1 #if you want to optimize the k, you should use the code above
+    km.res <- kmeans(x,2, nstart = 25)
+    
+    centers <- km.res$centers[km.res$cluster, ] # "centers" is a data frame of 3 centers but the length of iris dataset so we can canlculate distance difference easily.
+    
+    distances <- sqrt(rowSums((x - centers)^2))
+    
+    y<-which(distances>1500)
+    
+    outliers <- order(distances, decreasing=T)[1:length(y)] 
+    Clients_Outliers<-col.names(y)
+    Outliers<-Clients_Outliers[outliers]
+    
+    
+    
+    Month_Weekdays_Outliers[[j,1]]<-Outliers
+    
+    
+    
+  }
+  return(Month_Weekdays_Outliers)
+}
+Cluster_Outliers_removal<-function(data){
+  Month_Weekdays_Outliers<-matrix(list(),length(data),1)
+  for (j in 1:length(data)){
+    x<-data[[j,1]]
+    # k<-elbow.k(x) #Optimize k, consume a lot of time
+    # k<-1 #if you want to optimize the k, you should use the code above
+    
+    
+    km.res <- kmeans(x,1, nstart = 25)
+    centers <- km.res$centers[km.res$cluster, ] # "centers" is a data frame of 3 centers but the length of iris dataset so we can canlculate distance difference easily.
+    
+    distances <- sqrt(rowSums((x - centers)^2))
+    
+    y<-which(distances>1000)
+    x<-x[-y,]
+    
+    
+    
+    
+    
+    
+    Month_Weekdays_Outliers[[j,1]]<-x
+    
+    
+    
+  }
+  return(Month_Weekdays_Outliers)
+}
+
+
+Cluster_Outliers_removal_Stratum<-function(data){
+    x<-data
+    # k<-elbow.k(x) #Optimize k, consume a lot of time
+    # k<-1 #if you want to optimize the k, you should use the code above
+    
+    
+    km.res <- kmeans(x,1, nstart = 25)
+    centers <- km.res$centers[km.res$cluster, ] # "centers" is a data frame of 3 centers but the length of iris dataset so we can canlculate distance difference easily.
+    
+    distances <- sqrt(rowSums((x - centers)^2))
+    
+    y<-which(distances>1000)
+    x<-x[-y,]
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+  
+  return(x)
+}
+
+Cluster_Outliers_removal_Stratum_Which<-function(data){
+  x<-data
+  # k<-elbow.k(x) #Optimize k, consume a lot of time
+  # k<-1 #if you want to optimize the k, you should use the code above
+  
+  
+  km.res <- kmeans(x,1, nstart = 25)
+  centers <- km.res$centers[km.res$cluster, ] # "centers" is a data frame of 3 centers but the length of iris dataset so we can canlculate distance difference easily.
+  
+  distances <- sqrt(rowSums((x - centers)^2))
+  
+  y<-which(distances>1500)
+
+  y<-as.integer(y)
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  return(y)
+}
+Cluster_Outliers_removal_which<-function(data){
+  Month_Weekdays_Outliers<-matrix(list(),length(data),1)
+  for (j in 1:length(data)){
+    x<-data[[j,1]]
+    # k<-elbow.k(x) #Optimize k, consume a lot of time
+    # k<-1 #if you want to optimize the k, you should use the code above
+    
+    
+    km.res <- kmeans(x,1, nstart = 25)
+    centers <- km.res$centers[km.res$cluster, ] # "centers" is a data frame of 3 centers but the length of iris dataset so we can canlculate distance difference easily.
+    
+    distances <- sqrt(rowSums((x - centers)^2))
+    
+    y<-which(distances>500)
+    
+    
+    
+    Month_Weekdays_Outliers[[j,1]]<-y
+    
+    
+    
+  }
+  return(Month_Weekdays_Outliers)
+}
+#Change the name of the Locality Suba, this is done in order, to locate the center of the locality.
+
+Change_Localities<-function(n){
+  for(i in 1:length(n$cliente)){
+    if(n$localidad[i]=="SUBA"){
+      n$localidad[i]<-"Suba,Bogota"
+      
+    } else if( n$localidad[i]=="KENNEDY"){
+      n$localidad[i]<-"Kennedy,Bogota"
+    }else if( n$localidad[i]=="ENGATIVA"){
+      n$localidad[i]<-"Engativa,Bogota"
+    }else if( n$localidad[i]=="EL OLIVO"){
+      n$localidad[i]<-"El Olivo,Bogota"
+    }else if( n$localidad[i]=="SAN ISIDRO"){
+      n$localidad[i]<-"San Isidro,Bogota"
+    }else if( n$localidad[i]=="FONTIBON"){
+      n$localidad[i]<-"Fontibon,Bogota"
+    }else if( n$localidad[i]=="ZIPAQUIRÁ"){
+      n$localidad[i]<-"Zipaquira,Cundinamarca"
+    }
+    else if( n$localidad[i]=="PUENTE ARANDA"){
+      n$localidad[i]<-"Puente Aranda,Bogota"
+    } else if( n$localidad[i]=="COGUA"){
+      n$localidad[i]<-"Cogua, Cundinamarca"
+    }else if( n$localidad[i]=="COGUA VEREDAL"){
+      n$localidad[i]<-"Cogua Veredal, Cundinamarca"
+    }else if( n$localidad[i]=="RINCON SANTO"){
+      n$localidad[i]<-"Rincon Santo, Bogota"
+    }
+    
+    
+    
+  }
+  return(n)
+}
+Remove_Rodamontal<-function(n){
+  Rodamontal<-which(n$localidad=="RODAMONTAL")
+  
+  if(length(Rodamontal)!=0){
+    n<-n[-Rodamontal,]
+  } 
+  
+  return(n)
+}
+
+
+
+Remove_Madrid<-function(n){
+  Madrid<-which(n$localidad=="MADRID")
+  
+  if(length(Madrid)!=0){
+    n<-n[-Madrid,]
+  } 
+  
+  return(n)
+}
+Remove_ZV<-function(n){
+  ZV<-which(n$localidad=="ZIPAQUIRÁ VEREDAL")
+  
+  if(length(ZV)!=0){
+    n<-n[-ZV,]
+  } 
+  
+  return(n) 
+}
+Datos_Clientes<-function(n){
+  
+  
+  Clientes<-unique(n$cliente)
+  
+  Datos_Clientes<- data.frame( 
+    stringsAsFactors=FALSE) 
+  Datos_Localidad<-data.frame(stringsAsFactors=FALSE)
+  #Generar Data Frame con clientes y localidades
+  
+  for (i in 1:length(Clientes)){
+    Localidad_Cliente<-which((n$cliente)==Clientes[i])
+    Posicion<-Localidad_Cliente[1]
+    Localidad_Cliente<-n$localidad[Posicion]
+    
+    Dato_Cliente<-data.frame(Clientes[i],Localidad_Cliente)
+    Datos_Clientes<-rbind.data.frame(Dato_Cliente,Datos_Clientes)
+  }
+  Datos_Clientes<-data.frame(Datos_Clientes)
+  
+}
+
+Assign_RandomCoord<-function(n){
+  set.seed(3000)
+  
+  Localidades<-as.character(unique(n$Localidad_Cliente))
+  
+  Coor_Localidades<-geocode(Localidades)
+  Datos_Coordenadas<- data.frame( 
+    stringsAsFactors=FALSE) 
+  for(i in 1:length(n$Localidad_Cliente)){
+    
+    Localidad<-as.character(n$Localidad_Cliente[i])
+    
+    Ubicacion<-which(Localidad==Localidades)
+    
+    
+    Coordenadas_Localidad<-Coor_Localidades[Ubicacion,]
+    Lon<-Coordenadas_Localidad$lon
+    Lat<-Coordenadas_Localidad$lat
+    
+    nLon<-rnorm(1,mean=Lon,sd=0.001)
+    nLat<-rnorm(1,mean=Lat,sd=0.001)
+    Coordenadas_Cliente<-data.frame(nLon,nLat)
+    Datos_Coordenadas<-rbind.data.frame(Coordenadas_Cliente,Datos_Coordenadas)
+    
+  }
+  
+  
+  
+  
+  
+  Datos_Clientes<-data.frame(n,Datos_Coordenadas)
+  colnames(Datos_Clientes)<-c("Clientes","Localidad","nLot","nLat")
+  return(Datos_Clientes)
+  
+}
+
+
+
+Organize_Clients_Hours_Locations<-function(n,clients){
+  Clients_Hour<-data.frame( 
+    stringsAsFactors=FALSE)
+  for(j in 1: length(n$V1)){
+    Client<-clients[j]
+    
+    Client_Location<-which(ClientsNovember$Clientes.i.==Client)
+    
+    Client_Location<-ClientsNovember[Client_Location,]
+    rownames(Client_Location)<-NULL
+    Clients_Hour<-rbind.data.frame(Client_Location,Clients_Hour)
+  }
+  
+  Clients<-data.frame(n,Clients_Hour)
+  return(Clients)
+}
+
+
+Obtain_Localities_names<-function(n){
+  x<-length(n)
+  Localities<-character(length=x)
+  for(i in 1:x){
+    L<-n[[i,1]]
+    Locality<-unique(L$localidad)
+    Localities[i]<-Locality
+  }
+  return(Localities)
+}
+### List to Matrix
+
+
+HourList_Matrix<-function(n){
+  x<-length(n[[1,1]])
+  Matrix<-matrix(, nrow = x, ncol = 24)
+  for(i in 1:24){
+    Matrix[,i]<-n[[i,1]]
+  }
+  return(Matrix)
+}
+
+#Map Visualization
+
+Map_Hour<-function(z,weigth,Localities_Names,Name_Map){
+  m <- leaflet() %>%
+    addTiles() %>% 
+    # Add default OpenStreetMap map tiles
+    addCircles(lng = z$lon, lat = z$lat, radius=weigth, popup=Localities_Names)  %>%
+    addPopups(lng = z$lon, lat = z$lat, Localities_Names,
+              options = popupOptions(closeButton = TRUE)) %>%
+    addMarkers(
+      lng =  -74.07521, lat = 4.664752,
+      label = Name_Map,
+      labelOptions = labelOptions(noHide = T))
+  m  # Print the map
+  
+}
+
+
+
+y<-which(January_Monday$Localidad_Cliente==Localidades_Monday_January[8])
+SI_Monday_January<-January_Monday[SI_Monday_January,]
+
+
+
+  
+  
+  
+
+  
+#Real time pricing
+  Price_Curve<- c(sample(10:15, 24, replace = TRUE))
+  
+  
+
+  
+  
+  
+  Elasticity<-function(Qc,Qp,Pc,Pp){
+    Elasticity<-((Qc-Qp)/Qp)/((Pc-Pp)/Pp)
+    return(Elasticity)
+  }
+  
+  #Find its elasticity
+  Find_Elasticity_Curve<-function(Test_Curve,Price_Curve){
+  
+  for(i in 1:23){
+   E_Curve[i]<-Elasticity(Test_Curve[i+1],Test_Curve[i],Price_Curve[i+1],Price_Curve[i])
+  }
+    return(E_Curve)
+    
+    
+  }
+  
+  #Divide Curve in moments
+  
+  Peak_Night<-function(Test_Curve){
+    Peak_Night<-Test_Curve[19:24]
+    return(Peak_Night)
+  }
+  
+Peak_Afternoon<-function(Test_Curve){
+  Peak_Afternoon<-Test_Curve[13:18]
+  return(Peak_Afternoon)
+}
+  
+Peak_Morning<-function(Test_Curve){
+  Peak_Morning<-Test_Curve[1:12]
+  return(Peak_Morning)
+}
+
+
+
+
+
+
+
+
+
